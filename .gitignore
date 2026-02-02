@@ -1,0 +1,33 @@
+# IDE
+.idea/
+.vscode/
+
+# Тестовые бинарники
+*.test
+
+# Профилирование и покрытие кода
+*.out
+*.prof
+coverage.txt
+coverage.html
+
+# Папки сборки
+bin/
+dist/
+build/
+tmp/
+
+# Зависимости (раскомментируйте если не коммитите vendor)
+# vendor/
+
+# Go workspace (раскомментируйте если не используете)
+# go.work
+# go.work.sum
+
+# Файлы окружения
+.env
+
+
+# Логи
+*.log
+logs/
