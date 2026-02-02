@@ -5,6 +5,7 @@ import (
 
 	"vision-bot/config"
 	telegram "vision-bot/internal/api"
+	"vision-bot/internal/infrastructure/storage"
 )
 
 func main() {
@@ -17,7 +18,11 @@ func main() {
 		log.Fatal("TELEGRAM_TOKEN is required")
 	}
 
-	bot, err := telegram.NewBot(cfg.TelegramToken)
+	// Создаём хранилище пользователей
+	userRepo := storage.NewMemoryUserRepository()
+
+	// Создаём бота
+	bot, err := telegram.NewBot(cfg.TelegramToken, userRepo)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
