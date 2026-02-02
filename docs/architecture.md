@@ -143,11 +143,13 @@ vision-bot/
 │   ├── domain/                     # Доменный слой
 │   │   ├── entity/
 │   │   │   ├── defect.go           # DefectArea
-│   │   │   └── inspection.go       # InspectionResult, AiDescription
+│   │   │   ├── inspection.go       # InspectionResult, AiDescription
+│   │   │   └── user.go             # User, UserState
 │   │   │
 │   │   └── port/                   # Интерфейсы (порты)
 │   │       ├── detector.go         # DefectDetector interface
-│   │       └── describer.go        # DefectDescriber interface
+│   │       ├── describer.go        # DefectDescriber interface
+│   │       └── user_repository.go  # UserRepository interface
 │   │
 │   ├── application/                # Application слой
 │   │   └── inspection/
@@ -164,7 +166,8 @@ vision-bot/
 │       │   └── prompt.go           # Системные промпты
 │       │
 │       └── storage/
-│           └── temp.go             # Временное хранение файлов
+│           ├── temp.go                    # Временное хранение файлов
+│           └── memory_user_repository.go  # In-memory хранилище пользователей
 │
 ├── config/                         # Конфигурация приложения
 │   └── config.go                   # Структура и загрузка конфига
@@ -231,6 +234,170 @@ type AiDescription struct {
     Text string
 }
 ```
+
+### User (Пользователь)
+
+Пользователь — субъект, взаимодействующий с ботом через Telegram. Для каждого пользователя отслеживается текущее состояние диалога, что позволяет реализовать многошаговые сценарии взаимодействия.
+
+```go
+// internal/domain/entity/user.go
+package entity
+
+// UserState состояние пользователя в диалоге
+type UserState string
+
+const (
+    StateMainMenu      UserState = "main_menu"       // В главном меню
+    StateAwaitingPhoto UserState = "awaiting_photo"  // Ожидание фото детали
+    StateProcessing    UserState = "processing"      // Обработка изображения
+)
+
+// User представляет пользователя бота
+type User struct {
+    ID     int64     // Telegram User ID
+    ChatID int64     // Telegram Chat ID
+    State  UserState // Текущее состояние пользователя
+}
+
+// NewUser создаёт нового пользователя с начальным состоянием
+func NewUser(userID, chatID int64) *User {
+    return &User{
+        ID:     userID,
+        ChatID: chatID,
+        State:  StateMainMenu,
+    }
+}
+
+// SetState обновляет состояние пользователя
+func (u *User) SetState(state UserState) {
+    u.State = state
+}
+```
+
+#### Диаграмма состояний
+
+```
+┌─────────────┐
+│  MainMenu   │◄─────────────────────────────────┐
+└──────┬──────┘                                  │
+       │ /start, /check                          │
+       ▼                                         │
+┌──────────────┐                                 │
+│AwaitingPhoto │                                 │
+└──────┬───────┘                                 │
+       │ получено фото                           │
+       ▼                                         │
+┌─────────────┐      результат отправлен         │
+│ Processing  │──────────────────────────────────┘
+└─────────────┘
+```
+
+#### Переходы состояний
+
+| Текущее состояние | Событие | Новое состояние | Действие |
+|-------------------|---------|-----------------|----------|
+| MainMenu | /start | MainMenu | Приветствие |
+| MainMenu | /check | AwaitingPhoto | Запрос фото |
+| MainMenu | фото | Processing | Начать обработку |
+| AwaitingPhoto | фото | Processing | Начать обработку |
+| AwaitingPhoto | /cancel | MainMenu | Отмена |
+| Processing | обработка завершена | MainMenu | Отправить результат |
+| * | текст (не команда) | — | Подсказка отправить фото |
+
+#### Интерфейс репозитория
+
+```go
+// internal/domain/port/user_repository.go
+package port
+
+import (
+    "context"
+    "vision-bot/internal/domain/entity"
+)
+
+// UserRepository интерфейс хранилища пользователей
+type UserRepository interface {
+    // Get возвращает пользователя по ID, создаёт нового если не найден
+    Get(ctx context.Context, userID, chatID int64) (*entity.User, error)
+    
+    // Save сохраняет состояние пользователя
+    Save(ctx context.Context, user *entity.User) error
+    
+    // UpdateState обновляет состояние пользователя
+    UpdateState(ctx context.Context, userID int64, state entity.UserState) error
+}
+```
+
+#### In-Memory реализация (для прототипа)
+
+```go
+// internal/infrastructure/storage/memory_user_repository.go
+package storage
+
+import (
+    "context"
+    "sync"
+    "vision-bot/internal/domain/entity"
+    "vision-bot/internal/domain/port"
+)
+
+// MemoryUserRepository in-memory хранилище пользователей
+type MemoryUserRepository struct {
+    mu    sync.RWMutex
+    users map[int64]*entity.User
+}
+
+// NewMemoryUserRepository создаёт новое in-memory хранилище
+func NewMemoryUserRepository() *MemoryUserRepository {
+    return &MemoryUserRepository{
+        users: make(map[int64]*entity.User),
+    }
+}
+
+func (r *MemoryUserRepository) Get(ctx context.Context, userID, chatID int64) (*entity.User, error) {
+    r.mu.RLock()
+    user, exists := r.users[userID]
+    r.mu.RUnlock()
+    
+    if exists {
+        return user, nil
+    }
+    
+    // Создаём нового пользователя
+    newUser := entity.NewUser(userID, chatID)
+    r.mu.Lock()
+    r.users[userID] = newUser
+    r.mu.Unlock()
+    
+    return newUser, nil
+}
+
+func (r *MemoryUserRepository) Save(ctx context.Context, user *entity.User) error {
+    r.mu.Lock()
+    r.users[user.ID] = user
+    r.mu.Unlock()
+    return nil
+}
+
+func (r *MemoryUserRepository) UpdateState(ctx context.Context, userID int64, state entity.UserState) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    
+    if user, exists := r.users[userID]; exists {
+        user.SetState(state)
+    }
+    return nil
+}
+
+var _ port.UserRepository = (*MemoryUserRepository)(nil)
+```
+
+#### Примечания
+
+- Для прототипа используется in-memory хранение (данные теряются при перезапуске).
+- При перезапуске бота все пользователи получают состояние `MainMenu`.
+- Потокобезопасность обеспечивается через `sync.RWMutex`.
+- В будущем можно легко заменить на Redis/PostgreSQL реализацию благодаря интерфейсу.
 
 ---
 
