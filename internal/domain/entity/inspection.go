@@ -1,6 +1,6 @@
 package entity
 
-// InspectionResult результат инспекции изображения
+// InspectionResult хранит итог анализа изображения.
 type InspectionResult struct {
 	ImageWidth  int          // ширина изображения
 	ImageHeight int          // высота изображения
@@ -8,7 +8,7 @@ type InspectionResult struct {
 	HasDefects  bool         // флаг наличия дефектов
 }
 
-// AiDescription текстовое описание дефектов от ИИ
+// AiDescription — текстовое описание дефектов от ИИ.
 type AiDescription struct {
 	Text string
 }

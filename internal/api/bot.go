@@ -14,13 +14,13 @@ import (
 )
 
 
-// Bot представляет Telegram-бота
+// Bot представляет Telegram-бота и хранит доступ к сервисам приложения.
 type Bot struct {
 	api               *tgbotapi.BotAPI
-	container *container.Container
+	container         *container.Container
 }
 
-// NewBot создаёт нового бота
+// NewBot создаёт нового бота и подключает контейнер сервисов.
 func NewBot(token string, container *container.Container) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
@@ -35,7 +35,7 @@ func NewBot(token string, container *container.Container) (*Bot, error) {
 	}, nil
 }
 
-// Run запускает основной цикл обработки сообщений
+// Run запускает основной цикл обработки сообщений от Telegram.
 func (b *Bot) Run() error {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -55,7 +55,7 @@ func (b *Bot) Run() error {
 	return nil
 }
 
-// handleMessage обрабатывает входящее сообщение
+// handleMessage выбирает сценарий в зависимости от состояния пользователя.
 func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	user, err := b.container.UserService.Get(ctx, msg.From.ID, msg.Chat.ID)
 	if err != nil {
@@ -81,7 +81,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 }
 
-// sendMessage отправляет текстовое сообщение
+// sendMessage отправляет текстовое сообщение в чат.
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {
@@ -89,7 +89,7 @@ func (b *Bot) sendMessage(chatID int64, text string) {
 	}
 }
 
-// sendPhoto отправляет изображение
+// sendPhoto отправляет изображение в чат.
 func (b *Bot) sendPhoto(chatID int64, imageData []byte) {
 	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
 		Name:  "result.jpg",
@@ -100,7 +100,7 @@ func (b *Bot) sendPhoto(chatID int64, imageData []byte) {
 	}
 }
 
-// handleMainMenu обрабатывает сообщения в состоянии главного меню
+// handleMainMenu обрабатывает сообщения в состоянии главного меню.
 func (b *Bot) handleMainMenu(ctx context.Context, msg *tgbotapi.Message) {
 	if msg.IsCommand() {
 		switch msg.Command() {
@@ -127,7 +127,7 @@ func (b *Bot) handleMainMenu(ctx context.Context, msg *tgbotapi.Message) {
 	b.sendMessage(msg.Chat.ID, msgStart)
 }
 
-// handleAwaitingOriginal обрабатывает сообщения в состоянии ожидания оригинала
+// handleAwaitingOriginal обрабатывает сообщения при ожидании оригинального фото.
 func (b *Bot) handleAwaitingOriginal(ctx context.Context, msg *tgbotapi.Message) {
 	if msg.IsCommand() {
 		if msg.Command() == cmdCancel {
@@ -163,7 +163,7 @@ func (b *Bot) handleAwaitingOriginal(ctx context.Context, msg *tgbotapi.Message)
 	b.sendMessage(msg.Chat.ID, msgAwaitingDefect)
 }
 
-// handleAwaitingDefect обрабатывает сообщения в состоянии ожидания дефекта
+// handleAwaitingDefect обрабатывает сообщения при ожидании фото дефекта.
 func (b *Bot) handleAwaitingDefect(ctx context.Context, msg *tgbotapi.Message) {
 	if msg.IsCommand() {
 		if msg.Command() == cmdCancel {
@@ -197,9 +197,30 @@ func (b *Bot) handleAwaitingDefect(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	b.sendMessage(msg.Chat.ID, msgProcessing)
-	b.sendMessage(msg.Chat.ID, "Получено изображение дефекта. Обработка пока не реализована.")
+	go b.processDefectPhoto(msg.From.ID, msg.Chat.ID, photoData)
 }
 
+// processDefectPhoto запускает детектор дефектов и отправляет результат.
+func (b *Bot) processDefectPhoto(userID int64, chatID int64, photo []byte) {
+	result, err := b.container.InspectionService.ProcessDefectPhotoDiff(context.Background(), userID, photo)
+	if err != nil || result == nil || result.Result == nil {
+		log.Printf("ProcessDefectPhoto error: %v", err)
+		b.sendMessage(chatID, msgProcessingError)
+		return
+	}
+
+	if result.Result.HasDefects {
+		b.sendMessage(chatID, msgDefectsFound)
+		if len(result.Highlighted) > 0 {
+			b.sendPhoto(chatID, result.Highlighted)
+		}
+		return
+	}
+
+	b.sendMessage(chatID, msgNoDefects)
+}
+
+// extractPhoto извлекает фото из сообщения и скачивает его.
 func (b *Bot) extractPhoto(msg *tgbotapi.Message) ([]byte, error) {
 	if msg.Photo == nil || len(msg.Photo) == 0 {
 		return nil, nil
@@ -209,7 +230,7 @@ func (b *Bot) extractPhoto(msg *tgbotapi.Message) ([]byte, error) {
 	return b.downloadFile(photo.FileID)
 }
 
-// downloadFile скачивает файл из Telegram
+// downloadFile скачивает файл из Telegram по его ID.
 func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	file, err := b.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if err != nil {

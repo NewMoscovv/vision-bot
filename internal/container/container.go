@@ -10,6 +10,7 @@ type Container struct {
 	InspectionService *app.InspectionService
 }
 
+// New собирает все сервисы приложения в одном месте.
 func New(userRepo port.UserRepository, detector port.DefectDetector, describer port.DefectDescriber) *Container {
 	userService := app.NewUserService(userRepo)
 	inspectionService := app.NewInspectionService(userService, detector, describer)

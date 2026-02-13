@@ -6,6 +6,7 @@ require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/joho/godotenv v1.5.1
 	github.com/stretchr/testify v1.9.0
+	gocv.io/x/gocv v0.36.1
 )
 
 require (

@@ -1,6 +1,6 @@
 package entity
 
-// DefectArea представляет область с обнаруженным дефектом
+// DefectArea описывает прямоугольную область дефекта на фото.
 type DefectArea struct {
 	X      int // координата X левого верхнего угла
 	Y      int // координата Y левого верхнего угла
@@ -9,7 +9,7 @@ type DefectArea struct {
 	Area   int // площадь области в пикселях
 }
 
-// Center возвращает координаты центра дефекта
+// Center возвращает координаты центра дефекта для простого описания положения.
 func (d DefectArea) Center() (x, y int) {
 	return d.X + d.Width/2, d.Y + d.Height/2
 }

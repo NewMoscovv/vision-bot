@@ -11,6 +11,9 @@ type DefectDetector interface {
 	// Inspect анализирует изображение и возвращает результат инспекции
 	Inspect(ctx context.Context, imageData []byte) (*entity.InspectionResult, error)
 
+	// InspectDiff сравнивает эталон и текущее изображение и ищет отличия
+	InspectDiff(ctx context.Context, baseImage []byte, currentImage []byte) (*entity.InspectionResult, error)
+
 	// HighlightDefects создаёт изображение с подсветкой дефектов
 	HighlightDefects(imageData []byte, result *entity.InspectionResult) ([]byte, error)
 }

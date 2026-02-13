@@ -31,3 +31,13 @@ func TestInspectionService_AcceptDefectPhoto(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, entity.StateMainMenu, user.State)
 }
+
+func TestInspectionService_ProcessDefectPhotoDiff_NoOriginal(t *testing.T) {
+	repo := storage.NewMemoryUserRepository()
+	userSvc := NewUserService(repo)
+	svc := NewInspectionService(userSvc, nil, nil)
+	ctx := context.Background()
+
+	_, err := svc.ProcessDefectPhotoDiff(ctx, 1, []byte("current"))
+	require.Error(t, err)
+}

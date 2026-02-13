@@ -1,5 +1,4 @@
-# Build stage
-FROM golang:1.25-alpine AS builder
+FROM gocv/opencv:4.13.0
 
 WORKDIR /app
 
@@ -10,19 +9,8 @@ RUN go mod download
 # Копируем исходный код
 COPY . .
 
-# Собираем бинарник
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bot ./cmd/main.go
-
-# Runtime stage
-FROM alpine:latest
-
-# Устанавливаем CA-сертификаты
-RUN apk --no-cache add ca-certificates
-
-WORKDIR /app
-
-# Копируем бинарник
-COPY --from=builder /bot /app/bot
+# Собираем бинарник (CGO включен, сборка с gocv)
+RUN CGO_ENABLED=1 GOOS=linux go build -tags gocv -o /app/bot ./cmd/main.go
 
 # Запуск
 CMD ["/app/bot"]

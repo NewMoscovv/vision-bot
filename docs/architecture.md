@@ -4,6 +4,13 @@
 
 **Vision Bot** — Telegram-бот для автоматического поиска дефектов на фотографиях деталей с использованием компьютерного зрения и генерации текстовых описаний через ИИ.
 
+### Режим работы с двумя фото (эталон и проверка)
+
+1) Пользователь отправляет оригинальное фото детали (эталон).  
+2) Пользователь отправляет фото дефекта.  
+3) Модуль CV сравнивает изображения (Diff) и ищет отличия.  
+4) Бот возвращает текстовый вердикт и изображение с подсветкой отличий.  
+
 ### Основной поток данных
 
 ```
@@ -35,7 +42,7 @@
 |-----------|------------|--------|
 | Язык программирования | Go | 1.21+ |
 | Telegram Bot API | go-telegram-bot-api | v5.5.1 |
-| Компьютерное зрение | GoCV (OpenCV) | v0.36+ / OpenCV 4.9 |
+| Компьютерное зрение | GoCV (OpenCV) | v0.36+ / OpenCV 4.x |
 | ИИ-модель | Qwen2.5 через Ollama | 7B / 14B |
 | Конфигурация | caarlos0/env + godotenv | v10 / v1.5 |
 | Логирование | uber-go/zap | v1.27 |
@@ -46,7 +53,7 @@
 ```go
 module vision-bot
 
-go 1.21
+go 1.25
 
 require (
     // Telegram Bot
@@ -55,15 +62,11 @@ require (
     // Computer Vision
     gocv.io/x/gocv v0.36.1
     
+    // Testing
+    github.com/stretchr/testify v1.9.0
+    
     // Конфигурация
-    github.com/caarlos0/env/v10 v10.0.0
     github.com/joho/godotenv v1.5.1
-    
-    // Логирование
-    go.uber.org/zap v1.27.0
-    
-    // Graceful shutdown
-    golang.org/x/sync v0.6.0
 )
 ```
 
@@ -85,10 +88,10 @@ require (
                                ▼
 ┌────────────────────────────────────────────────────────────────┐
 │                     APPLICATION LAYER                          │
-│              ┌───────────────────────────────┐                 │
-│              │     InspectionService         │                 │
-│              │   (оркестрация use-case)      │                 │
-│              └───────────────┬───────────────┘                 │
+│        ┌────────────────────┐   ┌──────────────────────┐       │
+│        │     UserService    │   │   InspectionService  │       │
+│        │  (состояния юзера) │   │   (логика проверки)  │       │
+│        └──────────┬─────────┘   └───────────┬──────────┘       │
 └──────────────────────────────┼─────────────────────────────────┘
                                │ uses
                                ▼
@@ -130,14 +133,12 @@ require (
 ```
 vision-bot/
 ├── cmd/
-│   └── bot/
-│       └── main.go                 # Точка входа, DI, запуск
+│   └── main.go                      # Точка входа, DI, запуск
 │
-├── api/                            # Транспортный слой (точки входа)
-│   └── telegram/
-│       ├── bot.go                  # Инициализация и запуск бота
-│       ├── handler.go              # Обработчики /start, /help, фото
-│       └── sender.go               # Формирование и отправка ответов
+├── internal/api/                   # Транспортный слой (Telegram)
+│   ├── bot.go                      # Инициализация и запуск бота
+│   ├── messages.go                 # Тексты сообщений
+│   └── commands.go                 # Команды бота
 │
 ├── internal/
 │   ├── domain/                     # Доменный слой
@@ -152,14 +153,13 @@ vision-bot/
 │   │       └── user_repository.go  # UserRepository interface
 │   │
 │   ├── application/                # Application слой
-│   │   └── inspection/
-│   │       └── service.go          # InspectionService
+│   │   ├── user.go                 # UserService
+│   │   └── inspection.go           # InspectionService
 │   │
 │   └── infrastructure/             # Инфраструктурный слой
 │       ├── vision/
-│       │   ├── detector.go         # GoCV реализация
-│       │   ├── preprocessor.go     # Предобработка изображений
-│       │   └── highlighter.go      # Подсветка дефектов
+│       │   ├── detector.go         # GoCV реализация (c тегом gocv)
+│       │   └── detector_stub.go    # Заглушка без OpenCV
 │       │
 │       ├── ai/
 │       │   ├── ollama.go           # Ollama/Qwen реализация
@@ -247,9 +247,10 @@ package entity
 type UserState string
 
 const (
-    StateMainMenu      UserState = "main_menu"       // В главном меню
-    StateAwaitingPhoto UserState = "awaiting_photo"  // Ожидание фото детали
-    StateProcessing    UserState = "processing"      // Обработка изображения
+    StateMainMenu            UserState = "main_menu"               // В главном меню
+    StateAwaitingOriginalPhoto UserState = "awaiting_original_photo" // Ожидание оригинала фото
+    StateAwaitingDefectPhoto   UserState = "awaiting_defect_photo"   // Ожидание фото дефекта
+    StateProcessing            UserState = "processing"              // Обработка изображения
 )
 
 // User представляет пользователя бота

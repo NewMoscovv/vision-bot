@@ -1,23 +1,23 @@
 package entity
 
-// UserState состояние пользователя в диалоге
+// UserState описывает этап диалога с пользователем.
 type UserState string
 
 const (
-	StateMainMenu      UserState = "main_menu"      // В главном меню
+	StateMainMenu            UserState = "main_menu"               // В главном меню
 	StateAwaitingOriginalPhoto UserState = "awaiting_original_photo" // Ожидание оригинала фото детали
 	StateAwaitingDefectPhoto   UserState = "awaiting_defect_photo"   // Ожидание фото дефекта
-	StateProcessing    UserState = "processing"     // Обработка изображения
+	StateProcessing            UserState = "processing"              // Обработка изображения
 )
 
-// User представляет пользователя бота
+// User представляет пользователя бота и его текущее состояние.
 type User struct {
 	ID     int64     // Telegram User ID
 	ChatID int64     // Telegram Chat ID
 	State  UserState // Текущее состояние пользователя
 }
 
-// NewUser создаёт нового пользователя с начальным состоянием
+// NewUser создаёт нового пользователя с начальным состоянием.
 func NewUser(userID, chatID int64) *User {
 	return &User{
 		ID:     userID,
@@ -26,7 +26,7 @@ func NewUser(userID, chatID int64) *User {
 	}
 }
 
-// SetState обновляет состояние пользователя
+// SetState обновляет состояние пользователя.
 func (u *User) SetState(state UserState) {
 	u.State = state
 }

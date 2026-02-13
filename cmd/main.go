@@ -7,6 +7,7 @@ import (
 	"vision-bot/internal/container"
 	telegram "vision-bot/internal/api"
 	"vision-bot/internal/infrastructure/storage"
+	"vision-bot/internal/infrastructure/vision"
 )
 
 func main() {
@@ -23,7 +24,8 @@ func main() {
 	userRepo := storage.NewMemoryUserRepository()
 
 	// Собираем сервисы приложения
-	appContainer := container.New(userRepo, nil, nil)
+	detector := vision.NewGoCVDetector(0)
+	appContainer := container.New(userRepo, detector, nil)
 
 	// Создаём бота
 	bot, err := telegram.NewBot(cfg.TelegramToken, appContainer)
