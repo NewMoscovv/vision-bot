@@ -5,7 +5,8 @@ type UserState string
 
 const (
 	StateMainMenu      UserState = "main_menu"      // В главном меню
-	StateAwaitingPhoto UserState = "awaiting_photo" // Ожидание фото детали
+	StateAwaitingOriginalPhoto UserState = "awaiting_original_photo" // Ожидание оригинала фото детали
+	StateAwaitingDefectPhoto   UserState = "awaiting_defect_photo"   // Ожидание фото дефекта
 	StateProcessing    UserState = "processing"     // Обработка изображения
 )
 

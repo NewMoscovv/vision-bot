@@ -9,52 +9,19 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"vision-bot/internal/container"
 	"vision-bot/internal/domain/entity"
-	"vision-bot/internal/domain/port"
 )
 
-const (
-	msgStart = `👋 Привет! Я бот для поиска дефектов на фотографиях деталей.
-
-📸 Отправьте мне фото детали, и я попробую найти и описать дефекты.
-
-📋 Команды:
-/check — начать проверку детали
-/help — справка
-/cancel — отменить текущую операцию`
-
-	msgHelp = `ℹ️ Как пользоваться ботом:
-
-1️⃣ Отправьте фото детали
-2️⃣ Бот проанализирует изображение
-3️⃣ Вы получите результат: текст + фото с подсветкой дефектов
-
-💡 Рекомендации:
-• Снимайте при хорошем освещении
-• Используйте однотонный фон
-• Фото должно быть чётким
-
-📋 Команды:
-/check — начать проверку
-/cancel — отменить операцию`
-
-	msgAwaitingPhoto   = "📸 Отправьте фото детали для проверки на дефекты."
-	msgCancelled       = "❌ Операция отменена. Отправьте /check для новой проверки."
-	msgSendPhoto       = "📸 Пожалуйста, отправьте фото детали для проверки на дефекты."
-	msgUnknownCommand  = "❓ Неизвестная команда. Используйте /help для справки."
-	msgProcessing      = "⏳ Обрабатываю изображение..."
-	msgNoDefects       = "✅ Дефекты не обнаружены."
-	msgProcessingError = "⚠️ Не удалось обработать изображение. Попробуйте сделать другое фото."
-)
 
 // Bot представляет Telegram-бота
 type Bot struct {
-	api      *tgbotapi.BotAPI
-	userRepo port.UserRepository
+	api               *tgbotapi.BotAPI
+	container *container.Container
 }
 
 // NewBot создаёт нового бота
-func NewBot(token string, userRepo port.UserRepository) (*Bot, error) {
+func NewBot(token string, container *container.Container) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -63,8 +30,8 @@ func NewBot(token string, userRepo port.UserRepository) (*Bot, error) {
 	log.Printf("Authorized on account %s", api.Self.UserName)
 
 	return &Bot{
-		api:      api,
-		userRepo: userRepo,
+		api:               api,
+		container: container,
 	}, nil
 }
 
@@ -90,83 +57,156 @@ func (b *Bot) Run() error {
 
 // handleMessage обрабатывает входящее сообщение
 func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
-	user, err := b.userRepo.Get(ctx, msg.From.ID, msg.Chat.ID)
+	user, err := b.container.UserService.Get(ctx, msg.From.ID, msg.Chat.ID)
 	if err != nil {
 		log.Printf("Error getting user: %v", err)
+		b.sendMessage(msg.Chat.ID, msgProcessingError)
 		return
 	}
 
-	// Обработка команд
-	if msg.IsCommand() {
-		b.handleCommand(ctx, msg, user)
+	switch user.State {
+	case entity.StateMainMenu:
+		b.handleMainMenu(ctx, msg)
 		return
-	}
-
-	// Обработка фото
-	if msg.Photo != nil && len(msg.Photo) > 0 {
-		b.handlePhoto(ctx, msg, user)
+	case entity.StateAwaitingOriginalPhoto:
+		b.handleAwaitingOriginal(ctx, msg)
 		return
-	}
-
-	// Текстовое сообщение (не команда)
-	b.sendMessage(msg.Chat.ID, msgSendPhoto)
-}
-
-// handleCommand обрабатывает команды бота
-func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message, user *entity.User) {
-	switch msg.Command() {
-	case "start":
-		user.SetState(entity.StateMainMenu)
-		b.userRepo.Save(ctx, user)
-		b.sendMessage(msg.Chat.ID, msgStart)
-
-	case "help":
-		b.sendMessage(msg.Chat.ID, msgHelp)
-
-	case "check":
-		user.SetState(entity.StateAwaitingPhoto)
-		b.userRepo.Save(ctx, user)
-		b.sendMessage(msg.Chat.ID, msgAwaitingPhoto)
-
-	case "cancel":
-		user.SetState(entity.StateMainMenu)
-		b.userRepo.Save(ctx, user)
-		b.sendMessage(msg.Chat.ID, msgCancelled)
-
+	case entity.StateAwaitingDefectPhoto:
+		b.handleAwaitingDefect(ctx, msg)
+		return
 	default:
-		b.sendMessage(msg.Chat.ID, msgUnknownCommand)
+		_, _ = b.container.UserService.Cancel(ctx, msg.From.ID, msg.Chat.ID)
+		b.sendMessage(msg.Chat.ID, msgStart)
+		return
 	}
 }
 
-// handlePhoto обрабатывает входящее фото
-func (b *Bot) handlePhoto(ctx context.Context, msg *tgbotapi.Message, user *entity.User) {
-	// Устанавливаем состояние "обработка"
-	user.SetState(entity.StateProcessing)
-	b.userRepo.Save(ctx, user)
+// sendMessage отправляет текстовое сообщение
+func (b *Bot) sendMessage(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("Error sending message: %v", err)
+	}
+}
+
+// sendPhoto отправляет изображение
+func (b *Bot) sendPhoto(chatID int64, imageData []byte) {
+	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
+		Name:  "result.jpg",
+		Bytes: imageData,
+	})
+	if _, err := b.api.Send(photo); err != nil {
+		log.Printf("Error sending photo: %v", err)
+	}
+}
+
+// handleMainMenu обрабатывает сообщения в состоянии главного меню
+func (b *Bot) handleMainMenu(ctx context.Context, msg *tgbotapi.Message) {
+	if msg.IsCommand() {
+		switch msg.Command() {
+		case cmdStart:
+			b.sendMessage(msg.Chat.ID, msgStart)
+			return
+		case cmdHelp:
+			b.sendMessage(msg.Chat.ID, msgHelp)
+			return
+		case cmdCheck:
+			if _, err := b.container.UserService.BeginCheck(ctx, msg.From.ID, msg.Chat.ID); err != nil {
+				log.Printf("BeginCheck error: %v", err)
+				b.sendMessage(msg.Chat.ID, msgProcessingError)
+				return
+			}
+			b.sendMessage(msg.Chat.ID, msgAwaitingOriginal)
+			return
+		default:
+			b.sendMessage(msg.Chat.ID, msgStart)
+			return
+		}
+	}
+
+	b.sendMessage(msg.Chat.ID, msgStart)
+}
+
+// handleAwaitingOriginal обрабатывает сообщения в состоянии ожидания оригинала
+func (b *Bot) handleAwaitingOriginal(ctx context.Context, msg *tgbotapi.Message) {
+	if msg.IsCommand() {
+		if msg.Command() == cmdCancel {
+			if _, err := b.container.UserService.Cancel(ctx, msg.From.ID, msg.Chat.ID); err != nil {
+				log.Printf("Cancel error: %v", err)
+				b.sendMessage(msg.Chat.ID, msgProcessingError)
+				return
+			}
+			b.sendMessage(msg.Chat.ID, msgCancelled)
+			return
+		}
+		b.sendMessage(msg.Chat.ID, msgOnlyCancel)
+		return
+	}
+
+	photoData, err := b.extractPhoto(msg)
+	if err != nil {
+		log.Printf("Error downloading original photo: %v", err)
+		b.sendMessage(msg.Chat.ID, msgProcessingError)
+		return
+	}
+	if len(photoData) == 0 {
+		b.sendMessage(msg.Chat.ID, msgAwaitingOriginal)
+		return
+	}
+
+	if _, err := b.container.InspectionService.AcceptOriginalPhoto(ctx, msg.From.ID, msg.Chat.ID, photoData); err != nil {
+		log.Printf("AcceptOriginalPhoto error: %v", err)
+		b.sendMessage(msg.Chat.ID, msgProcessingError)
+		return
+	}
+
+	b.sendMessage(msg.Chat.ID, msgAwaitingDefect)
+}
+
+// handleAwaitingDefect обрабатывает сообщения в состоянии ожидания дефекта
+func (b *Bot) handleAwaitingDefect(ctx context.Context, msg *tgbotapi.Message) {
+	if msg.IsCommand() {
+		if msg.Command() == cmdCancel {
+			if _, err := b.container.UserService.Cancel(ctx, msg.From.ID, msg.Chat.ID); err != nil {
+				log.Printf("Cancel error: %v", err)
+				b.sendMessage(msg.Chat.ID, msgProcessingError)
+				return
+			}
+			b.sendMessage(msg.Chat.ID, msgCancelled)
+			return
+		}
+		b.sendMessage(msg.Chat.ID, msgOnlyCancel)
+		return
+	}
+
+	photoData, err := b.extractPhoto(msg)
+	if err != nil {
+		log.Printf("Error downloading defect photo: %v", err)
+		b.sendMessage(msg.Chat.ID, msgProcessingError)
+		return
+	}
+	if len(photoData) == 0 {
+		b.sendMessage(msg.Chat.ID, msgAwaitingDefect)
+		return
+	}
+
+	if _, err := b.container.InspectionService.AcceptDefectPhoto(ctx, msg.From.ID, msg.Chat.ID, photoData); err != nil {
+		log.Printf("AcceptDefectPhoto error: %v", err)
+		b.sendMessage(msg.Chat.ID, msgProcessingError)
+		return
+	}
 
 	b.sendMessage(msg.Chat.ID, msgProcessing)
+	b.sendMessage(msg.Chat.ID, "Получено изображение дефекта. Обработка пока не реализована.")
+}
 
-	// Получаем файл с максимальным разрешением
-	photo := msg.Photo[len(msg.Photo)-1]
-
-	imageData, err := b.downloadFile(photo.FileID)
-	if err != nil {
-		log.Printf("Error downloading photo: %v", err)
-		b.sendMessage(msg.Chat.ID, msgProcessingError)
-		user.SetState(entity.StateMainMenu)
-		b.userRepo.Save(ctx, user)
-		return
+func (b *Bot) extractPhoto(msg *tgbotapi.Message) ([]byte, error) {
+	if msg.Photo == nil || len(msg.Photo) == 0 {
+		return nil, nil
 	}
 
-	// TODO: Здесь будет вызов InspectionService
-	// Пока просто возвращаем заглушку
-	log.Printf("Received image: %d bytes", len(imageData))
-
-	b.sendMessage(msg.Chat.ID, fmt.Sprintf("Получено изображение (%d байт). Обработка пока не реализована.", len(imageData)))
-
-	// Возвращаем в главное меню
-	user.SetState(entity.StateMainMenu)
-	b.userRepo.Save(ctx, user)
+	photo := msg.Photo[len(msg.Photo)-1]
+	return b.downloadFile(photo.FileID)
 }
 
 // downloadFile скачивает файл из Telegram
@@ -190,12 +230,4 @@ func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	}
 
 	return data, nil
-}
-
-// sendMessage отправляет текстовое сообщение
-func (b *Bot) sendMessage(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := b.api.Send(msg); err != nil {
-		log.Printf("Error sending message: %v", err)
-	}
 }
