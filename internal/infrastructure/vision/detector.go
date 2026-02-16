@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -17,19 +18,29 @@ import (
 )
 
 type GoCVDetector struct {
-	MinAreaRatio   float64
-	MaxAspectRatio float64
-	MinAspectRatio float64
-	MaxSide        int
+	MinAreaRatio          float64
+	MaxAspectRatio        float64
+	MinAspectRatio        float64
+	MaxSide               int
+	MinImageSide          int
+	MinSharpnessEdgeRatio float64
+	MaxOverexposedRatio   float64
+	MaxUnderexposedRatio  float64
+	MaxGlareRatio         float64
 }
 
 // NewGoCVDetector создаёт детектор с минимальной площадью дефекта.
 func NewGoCVDetector(minArea int) *GoCVDetector {
 	return &GoCVDetector{
-		MinAreaRatio:   0.001,
-		MinAspectRatio: 0.1,
-		MaxAspectRatio: 10.0,
-		MaxSide:        1024,
+		MinAreaRatio:          0.001,
+		MinAspectRatio:        0.1,
+		MaxAspectRatio:        10.0,
+		MaxSide:               1024,
+		MinImageSide:          400,
+		MinSharpnessEdgeRatio: 0.008,
+		MaxOverexposedRatio:   0.35,
+		MaxUnderexposedRatio:  0.45,
+		MaxGlareRatio:         0.08,
 	}
 }
 
@@ -44,6 +55,9 @@ func (d *GoCVDetector) Inspect(ctx context.Context, imageData []byte) (*entity.I
 
 	if mat.Empty() {
 		return nil, errors.New("empty image")
+	}
+	if err := d.checkImageQuality(mat, "image"); err != nil {
+		return nil, err
 	}
 
 	// Приводим изображение к стандартному размеру для стабильных порогов.
@@ -124,6 +138,12 @@ func (d *GoCVDetector) InspectDiff(ctx context.Context, baseImage []byte, curren
 
 	if baseMat.Empty() || currentMat.Empty() {
 		return nil, errors.New("empty image")
+	}
+	if err := d.checkImageQuality(baseMat, "base image"); err != nil {
+		return nil, err
+	}
+	if err := d.checkImageQuality(currentMat, "current image"); err != nil {
+		return nil, err
 	}
 
 	// Приводим оба изображения к одному размеру (минимальный из двух).
@@ -258,4 +278,79 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (d *GoCVDetector) checkImageQuality(mat gocv.Mat, label string) error {
+	if mat.Empty() {
+		return fmt.Errorf("quality gate failed for %s: empty image", label)
+	}
+
+	if mat.Cols() < d.MinImageSide || mat.Rows() < d.MinImageSide {
+		return fmt.Errorf("quality gate failed for %s: image is too small (%dx%d)", label, mat.Cols(), mat.Rows())
+	}
+
+	gray := gocv.NewMat()
+	defer gray.Close()
+	gocv.CvtColor(mat, &gray, gocv.ColorBGRToGray)
+
+	edges := gocv.NewMat()
+	defer edges.Close()
+	gocv.Canny(gray, &edges, 80, 160)
+	edgeRatio := ratioOfMask(edges)
+	if edgeRatio < d.MinSharpnessEdgeRatio {
+		return fmt.Errorf("quality gate failed for %s: image is blurry (edge_ratio=%.4f)", label, edgeRatio)
+	}
+
+	bright := gocv.NewMat()
+	defer bright.Close()
+	gocv.Threshold(gray, &bright, 250, 255, gocv.ThresholdBinary)
+	overexposedRatio := ratioOfMask(bright)
+	if overexposedRatio > d.MaxOverexposedRatio {
+		return fmt.Errorf("quality gate failed for %s: overexposed image (ratio=%.4f)", label, overexposedRatio)
+	}
+
+	dark := gocv.NewMat()
+	defer dark.Close()
+	gocv.Threshold(gray, &dark, 20, 255, gocv.ThresholdBinaryInv)
+	underexposedRatio := ratioOfMask(dark)
+	if underexposedRatio > d.MaxUnderexposedRatio {
+		return fmt.Errorf("quality gate failed for %s: underexposed image (ratio=%.4f)", label, underexposedRatio)
+	}
+
+	hsv := gocv.NewMat()
+	defer hsv.Close()
+	gocv.CvtColor(mat, &hsv, gocv.ColorBGRToHSV)
+	channels := gocv.Split(hsv)
+	for i := range channels {
+		defer channels[i].Close()
+	}
+	if len(channels) < 3 {
+		return fmt.Errorf("quality gate failed for %s: invalid hsv channels", label)
+	}
+
+	lowSat := gocv.NewMat()
+	defer lowSat.Close()
+	gocv.Threshold(channels[1], &lowSat, 40, 255, gocv.ThresholdBinaryInv)
+
+	highVal := gocv.NewMat()
+	defer highVal.Close()
+	gocv.Threshold(channels[2], &highVal, 245, 255, gocv.ThresholdBinary)
+
+	glare := gocv.NewMat()
+	defer glare.Close()
+	gocv.BitwiseAnd(lowSat, highVal, &glare)
+	glareRatio := ratioOfMask(glare)
+	if glareRatio > d.MaxGlareRatio {
+		return fmt.Errorf("quality gate failed for %s: too much glare (ratio=%.4f)", label, glareRatio)
+	}
+
+	return nil
+}
+
+func ratioOfMask(mask gocv.Mat) float64 {
+	total := mask.Cols() * mask.Rows()
+	if total <= 0 {
+		return 0
+	}
+	return float64(gocv.CountNonZero(mask)) / float64(total)
 }
