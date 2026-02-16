@@ -231,6 +231,24 @@ func (b *Bot) processDefectPhoto(userID int64, chatID int64, photo []byte) {
 		result.Result.HasDefects,
 		len(result.Result.Defects),
 	)
+	for i, defect := range result.Result.Defects {
+		reason := defect.Reason
+		if reason == "" {
+			reason = "not_set"
+		}
+		log.Printf(
+			"ProcessDefectPhoto defect user_id=%d chat_id=%d idx=%d bbox=(x=%d y=%d w=%d h=%d area=%d) reason=%s",
+			userID,
+			chatID,
+			i,
+			defect.X,
+			defect.Y,
+			defect.Width,
+			defect.Height,
+			defect.Area,
+			reason,
+		)
+	}
 
 	if result.Result.HasDefects {
 		b.sendMessage(chatID, msgDefectsFound)
