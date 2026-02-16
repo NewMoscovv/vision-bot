@@ -20,6 +20,11 @@ type GoCVDetector struct {
 	MaxOverexposedRatio   float64
 	MaxUnderexposedRatio  float64
 	MaxGlareRatio         float64
+	DiffMaxGlareRatio     float64
+	MinPartAreaRatio      float64
+	ROIMarginKernel       int
+	EnableRegistration    bool
+	MinAlignmentScore     float64
 }
 
 // NewGoCVDetector создаёт детектор-заглушку (без OpenCV).
@@ -33,7 +38,12 @@ func NewGoCVDetector(minArea int) *GoCVDetector {
 		MinSharpnessEdgeRatio: 0.008,
 		MaxOverexposedRatio:   0.35,
 		MaxUnderexposedRatio:  0.45,
-		MaxGlareRatio:         0.08,
+		MaxGlareRatio:         0.20,
+		DiffMaxGlareRatio:     0.26,
+		MinPartAreaRatio:      0.05,
+		ROIMarginKernel:       9,
+		EnableRegistration:    true,
+		MinAlignmentScore:     0.25,
 	}
 }
 

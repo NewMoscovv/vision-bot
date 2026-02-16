@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -13,11 +14,10 @@ import (
 	"vision-bot/internal/domain/entity"
 )
 
-
 // Bot представляет Telegram-бота и хранит доступ к сервисам приложения.
 type Bot struct {
-	api               *tgbotapi.BotAPI
-	container         *container.Container
+	api       *tgbotapi.BotAPI
+	container *container.Container
 }
 
 // NewBot создаёт нового бота и подключает контейнер сервисов.
@@ -30,7 +30,7 @@ func NewBot(token string, container *container.Container) (*Bot, error) {
 	log.Printf("Authorized on account %s", api.Self.UserName)
 
 	return &Bot{
-		api:               api,
+		api:       api,
 		container: container,
 	}, nil
 }
@@ -203,11 +203,34 @@ func (b *Bot) handleAwaitingDefect(ctx context.Context, msg *tgbotapi.Message) {
 // processDefectPhoto запускает детектор дефектов и отправляет результат.
 func (b *Bot) processDefectPhoto(userID int64, chatID int64, photo []byte) {
 	result, err := b.container.InspectionService.ProcessDefectPhotoDiff(context.Background(), userID, photo)
-	if err != nil || result == nil || result.Result == nil {
-		log.Printf("ProcessDefectPhoto error: %v", err)
+	if err != nil {
+		log.Printf(
+			"ProcessDefectPhoto failed user_id=%d chat_id=%d reason=%s err=%v",
+			userID,
+			chatID,
+			classifyInspectionError(err),
+			err,
+		)
 		b.sendMessage(chatID, msgProcessingError)
 		return
 	}
+	if result == nil || result.Result == nil {
+		log.Printf(
+			"ProcessDefectPhoto failed user_id=%d chat_id=%d reason=empty_result",
+			userID,
+			chatID,
+		)
+		b.sendMessage(chatID, msgProcessingError)
+		return
+	}
+
+	log.Printf(
+		"ProcessDefectPhoto completed user_id=%d chat_id=%d has_defects=%t defects=%d",
+		userID,
+		chatID,
+		result.Result.HasDefects,
+		len(result.Result.Defects),
+	)
 
 	if result.Result.HasDefects {
 		b.sendMessage(chatID, msgDefectsFound)
@@ -251,4 +274,28 @@ func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+func classifyInspectionError(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "quality gate failed"):
+		return "quality_gate"
+	case strings.Contains(msg, "alignment failed"):
+		return "alignment"
+	case strings.Contains(msg, "failed to decode"):
+		return "decode"
+	case strings.Contains(msg, "original photo is not found"):
+		return "missing_original"
+	case strings.Contains(msg, "detector is not configured"):
+		return "detector_not_configured"
+	case strings.Contains(msg, "empty image"):
+		return "empty_image"
+	default:
+		return "unknown"
+	}
 }
